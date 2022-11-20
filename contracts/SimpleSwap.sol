@@ -28,14 +28,10 @@ contract SimpleSwap is ISimpleSwap, ERC20 {
         _tokenB = tokenB;
     }
 
-    function swap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn
-    ) external returns (uint256 amountOut) {
+    function swap(address tokenIn, address tokenOut, uint256 amountIn) external returns (uint256 amountOut) {
         address tokenA = getTokenA();
         address tokenB = getTokenB();
-        
+
         require(tokenIn == tokenA || tokenIn == tokenB, "SimpleSwap: INVALID_TOKEN_IN");
         require(tokenOut == tokenA || tokenOut == tokenB, "SimpleSwap: INVALID_TOKEN_OUT");
         require(tokenIn != tokenOut, "SimpleSwap: IDENTICAL_ADDRESS");
@@ -43,29 +39,32 @@ contract SimpleSwap is ISimpleSwap, ERC20 {
 
         ERC20(tokenIn).approve(address(this), amountIn);
         ERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-        
+
         (uint256 reserveA, uint256 reserveB) = getReserves();
         uint256 tokenInBalance = ERC20(tokenIn).balanceOf(address(this));
         uint256 actualTokenIn = tokenIn == tokenA ? tokenInBalance.sub(reserveA) : tokenInBalance.sub(reserveB);
 
-        amountOut = reserveA.mul(reserveB).div(actualTokenIn.add(tokenIn == tokenA ? reserveA : reserveB));
-        require(amountOut > 0, "SimpleSwap: INSUFFICIENT_INPUT_AMOUNT");
+        uint256 reserveOut = tokenOut == tokenA ? reserveA : reserveB;
+        uint256 reserveIn = tokenIn == tokenA ? reserveA : reserveB;
 
-        ERC20(tokenOut).transfer(msg.sender, amountOut);
+        // Δy = y Δx  / (x + Δx)
+        // ref: https://github.com/Uniswap/v2-periphery/blob/master/contracts/libraries/UniswapV2Library.sol#L43
+        uint256 numerator = actualTokenIn.mul(reserveOut);
+        uint256 denominator = reserveIn.add(actualTokenIn);
+        amountOut = numerator.div(denominator);
+        require(amountOut > 0, "SimpleSwap: INSUFFICIENT_OUTPUT_AMOUNT");
+
         _reserveA = tokenIn == tokenA ? _reserveA.add(actualTokenIn) : _reserveA.sub(amountOut);
         _reserveB = tokenIn == tokenA ? _reserveB.sub(amountOut) : _reserveB.add(actualTokenIn);
-        
+        ERC20(tokenOut).transfer(msg.sender, amountOut);
+
         emit Swap(msg.sender, tokenIn, tokenOut, actualTokenIn, amountOut);
     }
 
-    function addLiquidity(uint256 amountAIn, uint256 amountBIn)
-        external
-        returns (
-            uint256 amountA,
-            uint256 amountB,
-            uint256 liquidity
-        )
-    {
+    function addLiquidity(
+        uint256 amountAIn,
+        uint256 amountBIn
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         require(amountAIn > 0 && amountBIn > 0, "SimpleSwap: INSUFFICIENT_INPUT_AMOUNT");
 
         address tokenA = getTokenA();
@@ -98,7 +97,7 @@ contract SimpleSwap is ISimpleSwap, ERC20 {
 
     function removeLiquidity(uint256 liquidity) external returns (uint256 amountA, uint256 amountB) {
         require(liquidity > 0, "SimpleSwap: INSUFFICIENT_LIQUIDITY_BURNED");
-        
+
         (uint256 reserveA, uint256 reserveB) = getReserves();
         uint256 totalSupply = totalSupply();
         uint256 repayAmountA = liquidity.mul(reserveA).div(totalSupply);
@@ -113,10 +112,10 @@ contract SimpleSwap is ISimpleSwap, ERC20 {
         uint256 balanceB = ERC20(tokenB).balanceOf(address(this));
         amountA = reserveA.sub(balanceA);
         amountB = reserveB.sub(balanceB);
-        
+
         transfer(address(this), liquidity);
         _burn(address(this), liquidity);
-        
+
         _reserveA = balanceA; // TODO: here should prevent reentrancy
         _reserveB = balanceB; // TODO: here should prevent reentrancy
 
